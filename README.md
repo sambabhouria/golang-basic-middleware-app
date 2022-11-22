@@ -1,6 +1,6 @@
 # Golang  Project Mogodb Create Read Update And Delete App
 
-Authentication using React Native and Express Node JS
+A RESTful API with Golang and MongoDB
 
 # `ScreenShot`
 
