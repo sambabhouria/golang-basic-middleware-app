@@ -1,245 +1,64 @@
+// forms.go
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
-	"strings"
-	"time"
-
-	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
-	"github.com/thedevsaddam/renderer"
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
-var rnd *renderer.Render
-var db *mgo.Database
-
-const (
-	hostName       string = "mongodb+srv://userdatabase:bhouriamongodbatlas123@shoeshop.0ybin.mongodb.net"
-	dbName         string = "userauthentication"
-	collectionName string = "users"
-	port           string = ":9000"
-)
-
-type (
-	todoModel struct {
-		ID        bson.ObjectId `bson:"_id,omitempty"`
-		Title     string        `bson:"title"`
-		Completed bool          `bson:"completed"`
-		CreatedAt time.Time     `bson:"createAt"`
-	}
-
-	todo struct {
-		ID        string    `json:"id"`
-		Title     string    `json:"title"`
-		Completed bool      `json:"completed"`
-		CreatedAt time.Time `json:"created_at"`
-	}
-)
+type ContactDetails struct {
+	Name        string
+	PhoneNumber string
+	Email       string
+	Options     string
+	Message     string
+}
 
 func main() {
-	stopChan := make(chan os.Signal)
-	signal.Notify(stopChan, os.Interrupt)
+	tmpl := template.Must(template.ParseFiles("static/forms.html"))
+	fmt.Println("hello world")
 
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Get("/", homeHandler)
-
-	r.Mount("/todo", todoHandlers())
-
-	srv := &http.Server{
-		Addr:         port,
-		Handler:      r,
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	go func() {
-		log.Println("Listening on port ", port)
-		if err := srv.ListenAndServe(); err != nil {
-			log.Printf("listen: %s\n", err)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			tmpl.Execute(w, nil)
+			return
 		}
-	}()
 
-	<-stopChan
-	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	srv.Shutdown(ctx)
-	defer cancel()
-	log.Println("Server gracefully stopped!")
-}
+		details := ContactDetails{
+			Name:        r.FormValue("name"),
+			PhoneNumber: r.FormValue("phonenumber"),
+			Email:       r.FormValue("email"),
+			Options:     r.FormValue("options"),
+			Message:     r.FormValue("message"),
+		}
+		fmt.Println("Forms Values", details)
+		// do something with details
+		_ = details
 
-// func init() {
-// 	fmt.Println("This will get called on main initialization")
-// }
-
-func init() {
-	rnd = renderer.New()
-	sess, err := mgo.Dial(hostName)
-	checkErr(err)
-	sess.SetMode(mgo.Monotonic, true)
-	db = sess.DB(dbName)
-}
-
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	err := rnd.Template(w, http.StatusOK, []string{"static/home.tpl"}, nil)
-	checkErr(err)
-}
-
-func createTodo(w http.ResponseWriter, r *http.Request) {
-	var t todo
-
-	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
-		rnd.JSON(w, http.StatusProcessing, err)
-		return
-	}
-
-	// simple validation
-	if t.Title == "" {
-		rnd.JSON(w, http.StatusBadRequest, renderer.M{
-			"message": "The title field is requried",
-		})
-		return
-	}
-
-	// if input is okay, create a todo
-	tm := todoModel{
-		ID:        bson.NewObjectId(),
-		Title:     t.Title,
-		Completed: false,
-		CreatedAt: time.Now(),
-	}
-	if err := db.C(collectionName).Insert(&tm); err != nil {
-		rnd.JSON(w, http.StatusProcessing, renderer.M{
-			"message": "Failed to save todo",
-			"error":   err,
-		})
-		return
-	}
-
-	rnd.JSON(w, http.StatusCreated, renderer.M{
-		"message": "Todo created successfully",
-		"todo_id": tm.ID.Hex(),
+		tmpl.Execute(w, struct{ Success bool }{true})
 	})
+
+	http.HandleFunc("/profile", logging(profile))
+	http.HandleFunc("/fieldset", logging(bar))
+
+	http.ListenAndServe(":8080", nil)
 }
 
-func updateTodo(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSpace(chi.URLParam(r, "id"))
-
-	if !bson.IsObjectIdHex(id) {
-		rnd.JSON(w, http.StatusBadRequest, renderer.M{
-			"message": "The id is invalid",
-		})
-		return
+func logging(f http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println(r.URL.Path)
+		f(w, r)
 	}
-
-	var t todo
-
-	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
-		rnd.JSON(w, http.StatusProcessing, err)
-		return
-	}
-
-	// simple validation
-	if t.Title == "" {
-		rnd.JSON(w, http.StatusBadRequest, renderer.M{
-			"message": "The title field is requried",
-		})
-		return
-	}
-
-	// if input is okay, update a todo
-	if err := db.C(collectionName).
-		Update(
-			bson.M{"_id": bson.ObjectIdHex(id)},
-			bson.M{"title": t.Title, "completed": t.Completed},
-		); err != nil {
-		rnd.JSON(w, http.StatusProcessing, renderer.M{
-			"message": "Failed to update todo",
-			"error":   err,
-		})
-		return
-	}
-
-	rnd.JSON(w, http.StatusOK, renderer.M{
-		"message": "Todo updated successfully",
-	})
 }
 
-func fetchTodos(w http.ResponseWriter, r *http.Request) {
-	todos := []todoModel{}
-
-	if err := db.C(collectionName).
-		Find(bson.M{}).
-		All(&todos); err != nil {
-		rnd.JSON(w, http.StatusProcessing, renderer.M{
-			"message": "Failed to fetch todo",
-			"error":   err,
-		})
-		return
-	}
-
-	todoList := []todo{}
-	for _, t := range todos {
-		todoList = append(todoList, todo{
-			ID:        t.ID.Hex(),
-			Title:     t.Title,
-			Completed: t.Completed,
-			CreatedAt: t.CreatedAt,
-		})
-	}
-
-	rnd.JSON(w, http.StatusOK, renderer.M{
-		"data": todoList,
-	})
+func profile(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.ParseFiles("static/profile.html"))
+	tmpl.Execute(w, nil)
 }
 
-func deleteTodo(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSpace(chi.URLParam(r, "id"))
-
-	if !bson.IsObjectIdHex(id) {
-		rnd.JSON(w, http.StatusBadRequest, renderer.M{
-			"message": "The id is invalid",
-		})
-		return
-	}
-
-	if err := db.C(collectionName).RemoveId(bson.ObjectIdHex(id)); err != nil {
-		rnd.JSON(w, http.StatusProcessing, renderer.M{
-			"message": "Failed to delete todo",
-			"error":   err,
-		})
-		return
-	}
-
-	rnd.JSON(w, http.StatusOK, renderer.M{
-		"message": "Todo deleted successfully",
-	})
-}
-
-func todoHandlers() http.Handler {
-	rg := chi.NewRouter()
-	rg.Group(func(r chi.Router) {
-		r.Get("/", fetchTodos)
-		r.Post("/", createTodo)
-		r.Put("/{id}", updateTodo)
-		r.Delete("/{id}", deleteTodo)
-	})
-	return rg
-}
-
-func checkErr(err error) {
-	fmt.Println("Error deteted")
-	if err != nil {
-
-		log.Fatal(err) //respond with error page or message
-	}
+func bar(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.ParseFiles("static/fieldset.html"))
+	tmpl.Execute(w, nil)
 }
